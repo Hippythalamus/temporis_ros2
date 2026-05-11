@@ -44,7 +44,7 @@ integration - Multi-router architectures
 
 cd \~/ros2_ws/src\
 git clone --recurse-submodules
-https://github.com/euge/temporis_ros2.git\
+https://github.com/Hippythalamus/temporis_ros2.git\
 cd \~/ros2_ws\
 colcon build --packages-select temporis_ros2\
 source install/setup.bash
