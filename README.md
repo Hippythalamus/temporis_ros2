@@ -12,6 +12,15 @@ SIM: Agent → /temporis/raw/states → temporis_shaper → /fleet/states →
 Agent\
 PROD: Agent → /fleet/states → Agent
 
+## Motivation
+
+Multi-agent robotic systems are commonly validated in idealized
+network conditions, while real deployments experience congestion,
+serialization overhead, router bottlenecks, and unstable latency.
+
+temporis_ros2 enables controlled latency injection for studying
+distributed robotic system behavior under realistic communication constraints.
+
 ## Features
 
 -   Queue-based latency modeling\
@@ -53,34 +62,31 @@ source install/setup.bash
 
 ## Quick test
 
-Run shaper:
+### Multi-agent simulation
+
+Run Temporis-enabled simulation:
+
 ```bash
-ros2 run temporis_ros2 temporis_shaper --ros-args\
--p input_topic:=/temporis/raw/test\
--p output_topic:=/test_output\
--p msg_type:=std_msgs/msg/String\
--p model:=QUEUE\
--p num_agents:=5\
--p enabled:=true\
--p bandwidth:=70.0\
--p propagation_delay:=0.05\
--p packet_size:=1.0
+ros2 launch temporis_ros2 multi_agent.launch.py
 ```
 
-Observe output: ros2 topic echo /test_output
+### Override parameters:
 
-Measure delay: ros2 topic hz /test_output
+```bash
+ros2 launch temporis_ros2 multi_agent.launch.py \
+    num_agents:=10 \
+    model:=QUEUE \
+    enabled:=true
+```
+### Production mode
 
-Diagnostics: ros2 topic echo /temporis/diagnostics
+Run agents without latency injection:
 
-Publish: ros2 topic pub /temporis/raw/test std_msgs/msg/String "{data:
-'hello'}" --rate 10
+```bash
+ros2 launch temporis_ros2 production.launch.py
+```
+Agents communicate directly through DDS using the same agent code.
 
-## Multi-agent simulation
-
-Simulation: ros2 launch temporis_ros2 multi_agent.launch.py
-
-Production: ros2 launch temporis_ros2 production.launch.py
 
 ## Configuration
 
@@ -109,8 +115,9 @@ ros2 param set /temporis_shaper enabled true
 
 ## Limitation
 
-Topology affects only latency model, not routing.\
-All messages still go through a single output topic.
+Topology currently affects only delay computation,
+not actual packet routing behavior.
+All messages are still forwarded through a single output topic.
 
 ## Architecture
 
@@ -142,10 +149,21 @@ end
 
 ## Repository structure
 
-temporis_ros2/ ├── launch/ ├── config/ ├── src/ └── temporis_core/
+temporis_ros2/
+├── launch/
+├── config/
+├── src/
+├── docs/
+└── temporis_core/
 
 
 ## Validation Results
+
+Test environment:
+- ROS2 Humble
+- Ubuntu 22.04
+- Localhost DDS communication
+- Intel laptop CPU
 
 ### Baseline DDS (no shaper)
 
@@ -192,7 +210,8 @@ Scaling test (10 agents)
 | 10     | ~65 ms       | ~66 ms |
 
 ## Result:
-Latency remains stable under increased fleet size in all_to_all topology.
+Observed latency remained stable when scaling from 5 to 10 agents
+under localhost testing conditions.
 
 ## Demo
 
