@@ -35,6 +35,17 @@ install(TARGETS temporis_shaper
   DESTINATION lib/${PROJECT_NAME}
 )
 
+add_executable(test_agent
+  src/test_agent_node.cpp
+)
+
+target_link_libraries(test_agent temporis_core)
+ament_target_dependencies(test_agent rclcpp std_msgs)
+
+install(TARGETS test_agent
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # ---- Launch files ----
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch

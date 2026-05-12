@@ -38,6 +38,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 
 // Temporis core
 #include "QueueLatencyModel.hpp"
@@ -95,6 +96,14 @@ public:
         msg_type_ = get_parameter("msg_type").as_string();
         model_name_ = get_parameter("model").as_string();
         enabled_ = get_parameter("enabled").as_bool();
+
+        param_callback_handle_ =
+            this->add_on_set_parameters_callback(
+                std::bind(
+                    &TemporisShaper::on_param_change,
+                    this,
+                    std::placeholders::_1));
+
         publish_diag_ = get_parameter("publish_diagnostics").as_bool();
         num_agents_ = get_parameter("num_agents").as_int();
         ns_prefix_ = get_parameter("namespace_prefix").as_string();
@@ -340,6 +349,29 @@ private:
     // Members
     // ================================================================
 
+    rcl_interfaces::msg::SetParametersResult
+    on_param_change(const std::vector<rclcpp::Parameter> & params)
+    {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+
+        for (const auto & param : params) {
+
+            if (param.get_name() == "enabled") {
+
+                enabled_ = param.as_bool();
+
+                RCLCPP_INFO(
+                    get_logger(),
+                    "Temporis shaper enabled=%s",
+                    enabled_ ? "true" : "false"
+                );
+            }
+        }
+
+        return result;
+    }
+
     std::string input_topic_;
     std::string output_topic_;
     std::string msg_type_;
@@ -371,6 +403,8 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr diag_pub_;
     rclcpp::TimerBase::SharedPtr drain_timer_;
     rclcpp::TimerBase::SharedPtr discovery_timer_;
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
+        param_callback_handle_;
 };
 
 }  // namespace temporis_ros2

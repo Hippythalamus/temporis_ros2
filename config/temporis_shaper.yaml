@@ -1,42 +1,82 @@
-# Temporis shaper configuration
-# Copy and adjust for your deployment
-
+# -------------------------------------------------------------------
+# Recommended local simulation profile
+# -------------------------------------------------------------------
+#
+# QUEUE:
+#   Simple bandwidth-limited latency model
+#
+# ZENOH_QUEUE:
+#   Client-router-subscriber transport approximation
+#
+# Typical local simulation:
+#   model: "QUEUE"
+#   bandwidth: 70.0
+#   propagation_delay: 0.05
+#
+# -------------------------------------------------------------------
 temporis_shaper:
   ros__parameters:
-    # Topic remapping
+
+    # ------------------------------------------------------------
+    # Topics
+    # ------------------------------------------------------------
+
     input_topic: "/temporis/raw/states"
     output_topic: "/fleet/states"
     msg_type: "std_msgs/msg/ByteMultiArray"
 
-    # Agent discovery
-    num_agents: 10
-    namespace_prefix: "robot_"   # /robot_0, /robot_1, ...
+    # ------------------------------------------------------------
+    # Multi-agent
+    # ------------------------------------------------------------
 
-    # On/off switch
+    num_agents: 10
+    namespace_prefix: "robot_"
+
+    # ------------------------------------------------------------
+    # Runtime
+    # ------------------------------------------------------------
+
     enabled: true
     publish_diagnostics: true
 
-    # Latency model: QUEUE or ZENOH_QUEUE
+    # ------------------------------------------------------------
+    # Model
+    # ------------------------------------------------------------
+
     model: "ZENOH_QUEUE"
 
-    # Communication topology: all_to_all, ring, grid, random_k
-    topology: "random_k"
-    topology_k: 5
+    # ------------------------------------------------------------
+    # Topology
+    # ------------------------------------------------------------
 
-    # --- ZENOH_QUEUE parameters (calibrated from real benchmark) ---
-    client_bandwidth: 1000.0            # bytes/sec
-    packet_size: 1.0                    # bytes per message
-    propagation_client_router: 0.000150 # sec
+    topology: "all_to_all"
+    topology_k: 4
+
+    # ------------------------------------------------------------
+    # QUEUE model
+    # ------------------------------------------------------------
+
+    bandwidth: 70.0
+    propagation_delay: 0.05
+
+    # ------------------------------------------------------------
+    # ZENOH_QUEUE model
+    # ------------------------------------------------------------
+
+    client_bandwidth: 1000.0
+    packet_size: 1.0
+
+    propagation_client_router: 0.000150
     propagation_router_subscriber: 0.000150
-    router_base_cost: 0.000108          # sec per message
-    router_per_sub_cost: 0.0000027      # sec per subscriber
 
-    # --- QUEUE parameters (if model=QUEUE) ---
-    # bandwidth: 70.0
-    # propagation_delay: 0.05
+    router_base_cost: 0.000108
+    router_per_sub_cost: 0.0000027
 
-    # --- Bandwidth noise (optional, both models) ---
-    bandwidth_logstd: 0.0    # 0 = deterministic
-    bandwidth_rho: 0.0       # AR(1) autocorrelation
+    # ------------------------------------------------------------
+    # Optional stochastic bandwidth dynamics
+    # ------------------------------------------------------------
+
+    bandwidth_logstd: 0.0
+    bandwidth_rho: 0.0
 
     seed: 42
