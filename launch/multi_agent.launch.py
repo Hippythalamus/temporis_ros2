@@ -22,11 +22,14 @@ Optional overrides:
       enabled:=true
 """
 
+import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+import yaml
+from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
 
@@ -34,30 +37,20 @@ def generate_launch_description():
     # Launch arguments
     # ------------------------------------------------------------------
 
-    num_agents_arg = DeclareLaunchArgument(
-        'num_agents',
-        default_value='5'
+    config_path = os.path.join(
+        get_package_share_directory('temporis_ros2'),
+        'config',
+        'temporis_shaper.yaml'
     )
 
-    model_arg = DeclareLaunchArgument(
-        'model',
-        default_value='QUEUE'
-    )
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
 
-    enabled_arg = DeclareLaunchArgument(
-        'enabled',
-        default_value='true'
-    )
-
-    num_agents = LaunchConfiguration('num_agents')
-    model = LaunchConfiguration('model')
-    enabled = LaunchConfiguration('enabled')
+    num_agents_value = config['temporis_shaper']['ros__parameters']['num_agents']
+    enable_value = config['temporis_shaper']['ros__parameters']['enabled']
+    model = config['temporis_shaper']['ros__parameters']['model']
 
     def launch_setup(context, *args, **kwargs):
-
-        num_agents_value = int(num_agents.perform(context))
-        model_value = model.perform(context)
-        enabled_value = enabled.perform(context).lower() == 'true'
 
         shaper_input = '/temporis/raw/states'
         fleet_topic = '/fleet/states'
@@ -80,15 +73,12 @@ def generate_launch_description():
                         FindPackageShare('temporis_ros2'),
                         'config',
                         'temporis_shaper.yaml'
-                    ]),
-                    {
-                        'model': model_value,
-                        'enabled': enabled_value,
-                        'num_agents': num_agents_value,
-                    }
+                    ])
                 ]
             )
         )
+
+
 
         # --------------------------------------------------------------
         # Test agents
@@ -120,8 +110,5 @@ def generate_launch_description():
         return nodes
 
     return LaunchDescription([
-        num_agents_arg,
-        model_arg,
-        enabled_arg,
         OpaqueFunction(function=launch_setup)
     ])

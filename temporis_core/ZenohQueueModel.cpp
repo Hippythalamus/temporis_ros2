@@ -93,8 +93,10 @@ double ZenohQueueModel::compute_delay(int sender, int receiver,
     assert(sender != receiver);
 
     // ---- Stage 1: client egress queue ----
-    const double t_real = t_arrival + sender * TIE_BREAK_EPS;
-    assert(sender == 0 || t_real != t_arrival);
+    double t_real = t_arrival + sender * TIE_BREAK_EPS;
+    if (sender != 0 && t_real == t_arrival) {
+        t_real += 1e-9;
+    }
 
     ClientState& client = clients_[sender];
     maybe_update_client_bandwidth(client, t_arrival);

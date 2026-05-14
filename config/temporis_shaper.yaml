@@ -23,13 +23,12 @@ temporis_shaper:
 
     input_topic: "/temporis/raw/states"
     output_topic: "/fleet/states"
-    msg_type: "std_msgs/msg/ByteMultiArray"
 
     # ------------------------------------------------------------
     # Multi-agent
     # ------------------------------------------------------------
 
-    num_agents: 10
+    num_agents: 20
     namespace_prefix: "robot_"
 
     # ------------------------------------------------------------
