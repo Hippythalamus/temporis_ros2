@@ -44,6 +44,15 @@ public:
         double client_bandwidth_rho    = 0.0;
 
         uint64_t seed = 42;
+
+        // Router fan-out: how many subscribers each message is forwarded to.
+        // Default -1 = auto (uses num_agents - 1, i.e. all-to-all).
+        // Set explicitly for sparse topologies:
+        //   ring        → 2
+        //   grid        → 4 (interior) or topology->degree(0)
+        //   random_k    → K
+        // Affects router_service_time = base_cost + per_sub_cost * fan_out.
+        int fan_out = -1;
     };
 
     explicit ZenohQueueModel(const Config& config);

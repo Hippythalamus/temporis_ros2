@@ -48,10 +48,13 @@ ZenohQueueModel::ZenohQueueModel(const Config& config)
     if (config.num_agents <= 0)
         throw std::invalid_argument(
             "ZenohQueueModel: num_agents must be > 0");
-
-    // Precompute router service time for all-to-all consensus:
-    // each message goes to N-1 subscribers
-    int fan_out = config.num_agents - 1;
+    
+    // Precompute router service time. Fan-out is the number of
+    // subscribers each message is forwarded to — set by topology
+    // when available, defaults to N-1 (all-to-all).
+    int fan_out = (config.fan_out > 0)
+                ? config.fan_out
+                : (config.num_agents - 1);
     router_service_time_ = config.router_base_cost
                          + config.router_per_sub_cost * fan_out;
 

@@ -112,14 +112,15 @@ public:
                 std::bind(&TemporisShaper::on_param_change,
                           this, std::placeholders::_1));
 
-        // ---- Build latency model ----
-        build_latency_model();
-
+        
         // ---- Build topology ----
         auto topo_name = get_parameter("topology").as_string();
         auto topo_k = get_parameter("topology_k").as_int();
         auto seed = static_cast<uint64_t>(get_parameter("seed").as_int());
         topology_ = make_topology(topo_name, num_agents_, topo_k, seed);
+
+        // ---- Build latency model ----
+        build_latency_model();
 
         RCLCPP_INFO(get_logger(),
             "Temporis shaper: model=%s topology=%s agents=%d enabled=%s",
@@ -181,6 +182,7 @@ private:
             cfg.client_bandwidth_logstd = get_parameter("bandwidth_logstd").as_double();
             cfg.client_bandwidth_rho = get_parameter("bandwidth_rho").as_double();
             cfg.seed = static_cast<uint64_t>(get_parameter("seed").as_int());
+            cfg.fan_out = topology_->degree(0); 
             latency_model_ = std::make_unique<ZenohQueueModel>(cfg);
         } else if (model_name_ == "QUEUE") {
             QueueLatencyModel::Config cfg{};
