@@ -46,6 +46,40 @@ install(TARGETS test_agent
   DESTINATION lib/${PROJECT_NAME}
 )
 
+add_executable(temporis_per_agent_shaper
+    src/temporis_per_agent_shaper_node.cpp
+    temporis_core/QueueLatencyModel.cpp
+    temporis_core/ZenohQueueModel.cpp
+    # Topology.hpp is header-only
+)
+ 
+target_include_directories(temporis_per_agent_shaper PRIVATE
+    include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/temporis_core
+)
+ 
+ament_target_dependencies(temporis_per_agent_shaper
+    rclcpp
+    std_msgs
+    rcl_interfaces
+)
+ 
+install(TARGETS temporis_per_agent_shaper
+    DESTINATION lib/${PROJECT_NAME}
+)
+
+add_executable(consensus_agent src/consensus_agent_node.cpp)
+ament_target_dependencies(consensus_agent rclcpp std_msgs)
+
+install(TARGETS
+  temporis_shaper
+  test_agent
+  consensus_agent  
+  temporis_per_agent_shaper       
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # ---- Launch files ----
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
