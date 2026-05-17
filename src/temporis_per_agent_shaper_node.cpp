@@ -1,5 +1,25 @@
 /// @file temporis_per_agent_shaper_node.cpp
-/// @brief Step 7: Per-agent shaper.
+/// @brief Step 8 v3: Per-agent shaper with QoS auto-adoption.
+///
+/// Step 8 v3 changes:
+///   - Shaper now AUTO-DETECTS publisher QoS from the input topic
+///     and configures its own subscription + downstream publisher
+///     to MATCH. No manual qos_reliability / qos_depth needed.
+///   - Transparent middleware: works with any reliability profile,
+///     any history depth.
+///   - Removes the QoS mismatch failure mode entirely.
+///
+/// How it works:
+///   1. Constructor does NOT create subscription/publisher (auto mode).
+///   2. Discovery timer polls input_topic for publishers (1Hz).
+///   3. First time at least one publisher is seen:
+///      - Read its QoS profile
+///      - Create subscription + publisher with matching QoS
+///      - Mark transport_initialized_ = true
+///
+/// Backward compat:
+///   If user passes qos_reliability != "auto", that QoS is used
+///   instead. Default is "auto".
 ///
 /// Architecture (Step 7):
 ///   Single process. N independent per-agent client queues sharing one
@@ -86,6 +106,8 @@ public:
         declare_parameter("enabled", true);
         declare_parameter("publish_diagnostics", true);
         declare_parameter("namespace_prefix", "robot_");
+        declare_parameter("qos_reliability", std::string("auto"));
+        declare_parameter("qos_depth", 100);  // ignored when qos_reliability="auto"
 
         // ZENOH_QUEUE parameters (calibrated 108µs/2.7µs)
         declare_parameter("client_bandwidth", 1000.0);
@@ -149,16 +171,24 @@ public:
             "  input: %s -> output: %s",
             input_topic_.c_str(), output_topic_.c_str());
 
-        auto qos = rclcpp::QoS(rclcpp::KeepLast(100)).reliable();
-
-        publisher_ = create_publisher<MsgType>(output_topic_, qos);
-
-        subscription_ = create_subscription<MsgType>(
-            input_topic_, qos,
-            [this](const MsgType::ConstSharedPtr msg,
-                   const rclcpp::MessageInfo & info) {
-                on_message(msg, info);
-            });
+        // Step 8 v3: QoS auto-adoption setup
+        qos_rel_param_ = get_parameter("qos_reliability").as_string();
+        qos_depth_param_ = get_parameter("qos_depth").as_int();
+        if (qos_rel_param_ == "auto" || qos_rel_param_ == "AUTO") {
+            RCLCPP_INFO(get_logger(),
+                "  QoS: auto-adoption — will adopt from first detected publisher");
+        } else {
+            auto qos = rclcpp::QoS(rclcpp::KeepLast(qos_depth_param_));
+            if (qos_rel_param_ == "best_effort" || qos_rel_param_ == "BEST_EFFORT") {
+                qos.best_effort();
+            } else {
+                qos.reliable();
+            }
+            RCLCPP_INFO(get_logger(),
+                "  QoS: %s+depth%d (explicit mode)",
+                qos_rel_param_.c_str(), static_cast<int>(qos_depth_param_));
+            initialize_transport(qos);
+        }
 
         if (publish_diag_) {
             diag_pub_ = create_publisher<std_msgs::msg::String>(
@@ -170,10 +200,10 @@ public:
             std::chrono::microseconds(500),
             std::bind(&PerAgentShaper::drain_all_queues, this));
 
-        // Discovery (1Hz)
+        // Discovery (1Hz): tries QoS auto-adoption + refreshes GID map
         discovery_timer_ = create_wall_timer(
             std::chrono::seconds(1),
-            std::bind(&PerAgentShaper::refresh_publisher_map, this));
+            std::bind(&PerAgentShaper::discovery_tick, this));
 
         // Stats timer: every 5s, log queue depths
         stats_timer_ = create_wall_timer(
@@ -271,6 +301,88 @@ private:
         return a ^ (b * 0x9e3779b97f4a7c15ULL);
     }
 
+    /// Step 8 v3: discovery tick entry point.
+    void discovery_tick() {
+        if (!transport_initialized_) {
+            if (!try_adopt_qos_from_publishers()) {
+                return;
+            }
+        }
+        refresh_publisher_map();
+    }
+
+    /// Step 8 v3: create sub/pub with chosen QoS.
+    void initialize_transport(const rclcpp::QoS & qos) {
+        if (transport_initialized_) return;
+
+        publisher_ = create_publisher<MsgType>(output_topic_, qos);
+        subscription_ = create_subscription<MsgType>(
+            input_topic_, qos,
+            [this](const MsgType::ConstSharedPtr msg,
+                   const rclcpp::MessageInfo & info) {
+                on_message(msg, info);
+            });
+        transport_initialized_ = true;
+
+        RCLCPP_INFO(get_logger(),
+            "Transport initialized: sub on %s, pub on %s",
+            input_topic_.c_str(), output_topic_.c_str());
+    }
+
+    /// Step 8 v3: read first publisher's QoS and adopt it.
+    /// Note: ROS2 Humble + rmw_zenoh does NOT propagate history/depth
+    /// via DDS discovery (those are publisher-local concerns, not part
+    /// of QoS compatibility matching). So we ALWAYS use KeepLast with
+    /// the qos_depth parameter, and adopt only the discovery-visible
+    /// fields: reliability, durability, deadline, lifespan, liveliness.
+    bool try_adopt_qos_from_publishers() {
+        auto pubs_info = get_publishers_info_by_topic(input_topic_);
+        if (pubs_info.empty()) return false;
+
+        const auto & first_pub = pubs_info[0];
+        const auto & pub_qos = first_pub.qos_profile();
+
+        // Use OUR qos_depth (publisher's depth is not visible via discovery).
+        auto qos = rclcpp::QoS(rclcpp::KeepLast(qos_depth_param_));
+
+        // These QoS fields ARE propagated via DDS discovery —
+        // adopt them from the publisher.
+        qos.reliability(pub_qos.reliability());
+        qos.durability(pub_qos.durability());
+        qos.deadline(pub_qos.deadline());
+        qos.lifespan(pub_qos.lifespan());
+        qos.liveliness(pub_qos.liveliness());
+        qos.liveliness_lease_duration(pub_qos.liveliness_lease_duration());
+
+        const char * rel_str = "unknown";
+        switch (pub_qos.reliability()) {
+            case rclcpp::ReliabilityPolicy::Reliable:
+                rel_str = "reliable"; break;
+            case rclcpp::ReliabilityPolicy::BestEffort:
+                rel_str = "best_effort"; break;
+            default: break;
+        }
+        RCLCPP_INFO(get_logger(),
+            "QoS auto-adopted: reliability=%s (from publisher), "
+            "depth=%d (local param), %zu publishers detected",
+            rel_str,
+            qos_depth_param_,
+            pubs_info.size());
+
+        for (size_t i = 1; i < pubs_info.size(); ++i) {
+            if (pubs_info[i].qos_profile().reliability() != pub_qos.reliability()) {
+                RCLCPP_WARN(get_logger(),
+                    "Heterogeneous QoS detected (publisher %zu differs). "
+                    "Using first publisher's QoS.",
+                    i);
+                break;
+            }
+        }
+
+        initialize_transport(qos);
+        return true;
+    }
+
     void refresh_publisher_map() {
         auto pubs_info = get_publishers_info_by_topic(input_topic_);
         for (const auto & info : pubs_info) {
@@ -300,6 +412,8 @@ private:
     // ================================================================
     void on_message(const MsgType::ConstSharedPtr msg,
                     const rclcpp::MessageInfo & info) {
+        if (!transport_initialized_) return;  // sub shouldn't exist yet
+
         if (!enabled_) {
             publisher_->publish(*msg);
             return;
@@ -356,6 +470,7 @@ private:
     // Drain: iterate all N queues, publish messages whose time has come
     // ================================================================
     void drain_all_queues() {
+        if (!transport_initialized_) return;
         auto now = this->now();
 
         for (int aid = 0; aid < num_agents_; ++aid) {
@@ -424,6 +539,11 @@ private:
     bool enabled_;
     bool publish_diag_;
     int num_agents_;
+
+    // Step 8 v3: QoS auto-adoption state
+    std::string qos_rel_param_;
+    int qos_depth_param_;
+    bool transport_initialized_ = false;
 
     std::unique_ptr<LatencyModel> latency_model_;
     std::unique_ptr<Topology> topology_;

@@ -1,0 +1,196 @@
+# =============================================================================
+# Temporis ROS2 — Unified Configuration
+# =============================================================================
+#
+# Single source of truth for all tunable parameters. Override on
+# command line for one-off experiments:
+#   ros2 launch temporis_ros2 consensus.launch.py num_agents:=50 topology:=ring
+#
+# Or copy this file, edit, and pass --params-file your_config.yaml.
+#
+# Sections:
+#   1. temporis_per_agent_shaper  — shaper node settings
+#   2. consensus_agent            — consensus node settings (per-agent ros__parameters)
+#   3. (notes)                    — comments on parameter relationships
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. SHAPER — temporis_per_agent_shaper node
+# -----------------------------------------------------------------------------
+# This node sits between agents and provides simulated latency via the
+# Temporis ZenohQueueModel or QueueLatencyModel. With shaper enabled, the
+# system follows the model; with enabled=false, real ROS2/Zenoh transport
+# is used and the shaper acts as a passthrough.
+# -----------------------------------------------------------------------------
+
+temporis_per_agent_shaper:
+  ros__parameters:
+
+    # --- Core wiring ---
+    # Topics the shaper reads from / writes to.
+    input_topic: "/temporis/raw/states"
+    output_topic: "/fleet/states"
+
+    # Enable/disable shaping. When false, shaper is a passthrough
+    # (used to measure real Zenoh latency for validation).
+    enabled: true
+
+    # --- Topology (matches Temporis core) ---
+    # Topology types: "all_to_all" | "ring" | "grid" | "random_k"
+    # topology_k is used only for random_k (degree per agent).
+    topology: "random_k"
+    topology_k: 5
+
+    # Number of agents in the system. Must match consensus_agent.num_agents.
+    num_agents: 50
+
+    # --- Model selection ---
+    # "ZENOH_QUEUE" — full Zenoh client+router model (default, calibrated)
+    # "QUEUE"       — simpler M/D/1 model (early experiments)
+    model: "ZENOH_QUEUE"
+
+    # --- QoS handling (Step 8 v3) ---
+    # "auto" — read publisher QoS via DDS discovery, match it.
+    # "reliable" or "best_effort" — force explicit mode (for testing).
+    qos_reliability: "auto"
+
+    # KeepLast queue depth for shaper's pub/sub. Used as-is in explicit mode,
+    # or as the local depth when auto-adopting reliability from publishers.
+    # Note: history/depth are NOT propagated via DDS discovery — they're
+    # local concerns. Set this large enough for your message rate × startup
+    # transient (e.g. 50 agents × 1Hz × 10s = 500).
+    qos_depth: 100
+
+    # --- Diagnostics ---
+    # Publishes per-message timing info on /temporis/diagnostics.
+    # Useful for debugging; turn off during measurement runs.
+    publish_diagnostics: false
+
+    # Namespace prefix for parsing agent IDs from node namespaces.
+    # E.g. /robot_7 → agent_id 7 with prefix "robot_".
+    namespace_prefix: "robot_"
+
+    # ==========================================================
+    # CALIBRATION PARAMETERS — change for different hardware/Zenoh.
+    # Re-calibrate on your platform; do not blindly reuse these.
+    # ==========================================================
+
+    # --- ZENOH_QUEUE model calibration ---
+    # Calibrated on Latitude E6540 (i7-4810MQ) + rmw_zenoh_cpp 0.1.8
+    # using zenoh_pingpong benchmark at N=10/20/50.
+
+    # Per-client outbound bandwidth (msg/s). Effectively a saturation cap.
+    client_bandwidth: 1000.0
+
+    # Effective packet size (units consistent with bandwidth). 1.0 = "messages
+    # per second" interpretation. Set higher for byte-level modeling.
+    packet_size: 1.0
+
+    # Propagation delays (seconds).
+    # client → router: how long for an outbound msg to reach the router.
+    # router → subscriber: same, on the inbound side.
+    propagation_client_router: 0.000150         # 150 µs
+    propagation_router_subscriber: 0.000150     # 150 µs
+
+    # Router base cost (seconds): time to handle one message regardless of
+    # subscriber count. Calibrated ~108 µs on test hardware.
+    router_base_cost: 0.000108                  # 108 µs
+
+    # Router per-subscriber cost (seconds): additional time per subscriber
+    # served. Calibrated ~2.7 µs on test hardware.
+    router_per_sub_cost: 0.0000027              # 2.7 µs
+
+    # --- QUEUE model (alternative simpler model) ---
+    # Used when model = "QUEUE". Single per-link bandwidth & delay.
+    bandwidth: 70.0                             # msg/s
+    propagation_delay: 0.05                     # 50 ms
+
+    # --- Stochastic noise (both models) ---
+    # AR(1) noise on bandwidth. logstd=0 disables it (deterministic).
+    # Use to model jitter in real systems.
+    bandwidth_logstd: 0.0
+    bandwidth_rho: 0.0
+
+    # RNG seed for reproducibility (latency model + topology).
+    seed: 42
+
+
+# -----------------------------------------------------------------------------
+# 2. AGENT — consensus_agent node
+# -----------------------------------------------------------------------------
+# Each agent runs an averaging consensus algorithm and publishes its state
+# at rate_hz. Both pub & sub use the QoS configured here; the shaper will
+# auto-adopt this QoS.
+# -----------------------------------------------------------------------------
+
+# Wildcard match: applies to every node named "consensus_agent" in any
+# namespace (e.g. /robot_0/consensus_agent, /robot_1/consensus_agent, ...).
+/**/consensus_agent:
+  ros__parameters:
+
+    # --- Wiring ---
+    pub_topic: "/temporis/raw/states"
+    sub_topic: "/fleet/states"
+
+    # Total agent count — must match shaper.num_agents.
+    num_agents: 50
+
+    # --- Consensus algorithm ---
+    # Update step: state_i += alpha * (remote_state - state_i) / (N - 1)
+    # alpha = 0.1 is standard; smaller = more conservative, more steps.
+    alpha: 0.1
+
+    # Publish rate. 1 Hz matches standalone Temporis (dt=1.0).
+    # Higher rates (10 Hz) reduce wall-clock time but don't change step count.
+    rate_hz: 1.0
+
+    # --- Run length ---
+    # Hard ceiling on steps. Convergence usually stops the run before this.
+    max_steps: 6387
+
+    # Initial state RNG seed. Each agent uses (init_seed + agent_id).
+    init_seed: 42
+
+    # --- Convergence detection ---
+    # Stop when local_variance < threshold for N stable_steps in a row,
+    # AND known == num_agents (we've heard from everyone at least once).
+    convergence_threshold: 0.000001       # 1e-6
+    convergence_stable_steps: 5
+
+    # --- QoS (Step 8 v2/v3) ---
+    # Reliability: "reliable" | "best_effort"
+    # - reliable: no message loss, but causes startup backlog amplification
+    #   without the shaper. Recommended for control flows.
+    # - best_effort: drops are possible during transient. Recommended for
+    #   high-rate sensor streams.
+    # The shaper will auto-detect and match whichever you choose here.
+    qos_reliability: "reliable"
+
+    # KeepLast queue depth on the agent's pub/sub.
+    # Increase for high-rate sensor topics.
+    qos_depth: 10
+
+
+# =============================================================================
+# Notes on parameter relationships
+# =============================================================================
+#
+#   shaper.num_agents  ==  consensus_agent.num_agents
+#       Both nodes need to agree on system size. If they differ, the
+#       topology will mismatch (shaper will fan_out to fewer / more agents
+#       than really exist).
+#
+#   shaper.qos_reliability == "auto"  +  agent.qos_reliability = anything
+#       Recommended setup. Shaper transparently matches whatever agents use.
+#
+#   shaper.qos_depth  >>  burst_size_from_one_agent
+#       If you publish at 100 Hz and discovery takes 5 s, one agent can
+#       queue ~500 messages before shaper processes them. Set qos_depth
+#       accordingly. For 1 Hz consensus, the default 100 is plenty.
+#
+#   shaper.seed  ==  agent.init_seed
+#       Not required but useful for reproducibility — same seed everywhere
+#       gives bit-identical runs (modulo wall-clock jitter).
+#
+# =============================================================================

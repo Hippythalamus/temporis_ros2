@@ -17,6 +17,8 @@
 temporis_shaper:
   ros__parameters:
 
+    output_csv: "/home/evg/Desktop/temporis_ros2/log/cc.cvs"
+
     # ------------------------------------------------------------
     # Topics
     # ------------------------------------------------------------
@@ -28,7 +30,7 @@ temporis_shaper:
     # Multi-agent
     # ------------------------------------------------------------
 
-    num_agents: 20
+    num_agents: 50
     namespace_prefix: "robot_"
 
     # ------------------------------------------------------------
@@ -48,8 +50,8 @@ temporis_shaper:
     # Topology
     # ------------------------------------------------------------
 
-    topology: "all_to_all"
-    topology_k: 4
+    topology: "random_k"
+    topology_k: 5
 
     # ------------------------------------------------------------
     # QUEUE model

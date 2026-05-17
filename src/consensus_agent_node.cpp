@@ -1,26 +1,19 @@
 /// @file consensus_agent_node.cpp
-/// @brief ROS2 consensus agent — port of consensus_demo to ROS2.
+/// @brief ROS2 consensus agent — Step 8 v2 (QoS-parameterized).
 ///
-/// Each agent:
-///   - Holds a scalar state (random init in [0, 100))
-///   - At a fixed rate, publishes its state on /temporis/raw/states
-///   - Subscribes to /fleet/states (delayed by Temporis shaper)
-///   - On receiving a message from another agent:
-///       state[i] = state[i] + alpha * (state[j] - state[i])
-///   - Periodically logs variance for convergence detection
+/// Step 8 v2 changes vs Step 8 v1:
+///   - Added qos_reliability parameter ("reliable" | "best_effort")
+///   - Added qos_depth parameter (KeepLast queue depth)
+///   - Default kept reliable+10 for backward compatibility, but tests
+///     of "transport latency" should use best_effort+1 to avoid
+///     QoS-induced backlog dominating the measurement.
 ///
-/// Message format (12 bytes minimum):
-///   [8 bytes: state (double)]
-///   [4 bytes: sender_agent_id (int32)]
+/// Validation matrix:
+///   - reliable+10:   measures transport + QoS buffering (what Step 8 v1 measured)
+///   - best_effort+1: measures transport only (Temporis scope)
 ///
-/// Convergence detection:
-///   Variance is computed locally per agent (each agent only knows
-///   states it has received). Global variance requires aggregation —
-///   for now we log per-agent and compute global externally from CSV.
-///
-/// Usage:
-///   ros2 run temporis_ros2 consensus_agent --ros-args \
-///     -p agent_id:=3 -p num_agents:=10 -p alpha:=0.1 -p rate_hz:=1.0
+/// Payload unchanged from v1: 20 bytes
+///   [state(8) | sender_id(4) | pub_time_ns(8)]
 
 #include <chrono>
 #include <cstdint>
@@ -36,6 +29,11 @@
 
 namespace temporis_ros2 {
 
+static constexpr size_t PAYLOAD_BYTES = 20;
+static constexpr size_t OFF_STATE = 0;
+static constexpr size_t OFF_SENDER = 8;
+static constexpr size_t OFF_PUBTIME = 12;
+
 class ConsensusAgent : public rclcpp::Node {
 public:
     ConsensusAgent()
@@ -47,11 +45,16 @@ public:
         declare_parameter("rate_hz", 1.0);
         declare_parameter("pub_topic", "/temporis/raw/states");
         declare_parameter("sub_topic", "/fleet/states");
-        declare_parameter("output_csv", "");  // empty = no CSV output
+        declare_parameter("output_csv", "");
+        declare_parameter("latency_csv", "");
         declare_parameter("max_steps", 6387);
         declare_parameter("init_seed", 42);
         declare_parameter("convergence_threshold", 1e-6);
         declare_parameter("convergence_stable_steps", 5);
+
+        // Step 8 v2: QoS knobs
+        declare_parameter("qos_reliability", std::string("reliable"));
+        declare_parameter("qos_depth", 10);
 
         agent_id_ = get_parameter("agent_id").as_int();
         num_agents_ = get_parameter("num_agents").as_int();
@@ -60,96 +63,118 @@ public:
         auto pub_topic = get_parameter("pub_topic").as_string();
         auto sub_topic = get_parameter("sub_topic").as_string();
         output_csv_ = get_parameter("output_csv").as_string();
+        latency_csv_ = get_parameter("latency_csv").as_string();
         max_steps_ = get_parameter("max_steps").as_int();
-        convergence_threshold_ = get_parameter("convergence_threshold").as_double();
-        convergence_stable_steps_ = get_parameter("convergence_stable_steps").as_int();
+        convergence_threshold_ =
+            get_parameter("convergence_threshold").as_double();
+        convergence_stable_steps_ =
+            get_parameter("convergence_stable_steps").as_int();
         int init_seed = get_parameter("init_seed").as_int();
 
-        // Initialize state deterministically based on (init_seed, agent_id)
-        // so all agents and the orchestrator agree on initial values.
+        auto qos_rel = get_parameter("qos_reliability").as_string();
+        auto qos_depth = get_parameter("qos_depth").as_int();
+
         std::mt19937 rng(init_seed + agent_id_);
         std::uniform_real_distribution<double> dist(0.0, 100.0);
         state_ = dist(rng);
 
-        // Track latest known state of each other agent (for variance)
         last_state_.assign(num_agents_, 0.0);
         has_state_.assign(num_agents_, false);
         last_state_[agent_id_] = state_;
         has_state_[agent_id_] = true;
 
         RCLCPP_INFO(get_logger(),
-            "ConsensusAgent [id=%d/%d] alpha=%.3f rate=%.2fHz init_state=%.4f conv_thr=%.1e",
-            agent_id_, num_agents_, alpha_, rate_hz, state_, convergence_threshold_);
+            "ConsensusAgent [id=%d/%d] alpha=%.3f rate=%.2fHz "
+            "init_state=%.4f qos=%s+depth%d",
+            agent_id_, num_agents_, alpha_, rate_hz, state_,
+            qos_rel.c_str(), static_cast<int>(qos_depth));
 
-        auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+        // Build QoS from parameters
+        auto qos = rclcpp::QoS(rclcpp::KeepLast(qos_depth));
+        if (qos_rel == "best_effort" || qos_rel == "BEST_EFFORT") {
+            qos.best_effort();
+        } else {
+            qos.reliable();
+        }
 
         publisher_ = create_publisher<std_msgs::msg::ByteMultiArray>(
             pub_topic, qos);
         subscription_ = create_subscription<std_msgs::msg::ByteMultiArray>(
             sub_topic, qos,
-            std::bind(&ConsensusAgent::on_message, this, std::placeholders::_1));
+            std::bind(&ConsensusAgent::on_message, this,
+                      std::placeholders::_1));
 
-        // Publish timer (drives consensus step)
         auto period = std::chrono::duration<double>(1.0 / rate_hz);
         step_timer_ = create_wall_timer(
             std::chrono::duration_cast<std::chrono::nanoseconds>(period),
             std::bind(&ConsensusAgent::step, this));
 
-        // Stats timer (every 2 seconds)
         stats_timer_ = create_wall_timer(
             std::chrono::seconds(2),
             std::bind(&ConsensusAgent::log_stats, this));
 
-        // Open CSV if requested
         if (!output_csv_.empty()) {
             csv_file_.open(output_csv_);
             if (csv_file_.is_open()) {
                 csv_file_ << "step,state,local_variance,recv_count\n";
-            } else {
-                RCLCPP_WARN(get_logger(),
-                    "Could not open CSV: %s", output_csv_.c_str());
+            }
+        }
+
+        if (!latency_csv_.empty()) {
+            latency_file_.open(latency_csv_);
+            if (latency_file_.is_open()) {
+                latency_file_
+                    << "recv_wall_time_ns,sender_id,latency_us,step_at_recv\n";
             }
         }
     }
 
     ~ConsensusAgent() override {
         if (csv_file_.is_open()) csv_file_.close();
+        if (latency_file_.is_open()) latency_file_.close();
     }
 
 private:
+    static int64_t steady_ns_now() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()
+        ).count();
+    }
+
     void step() {
         if (step_ >= max_steps_) {
             if (!finished_) {
                 finished_ = true;
                 RCLCPP_INFO(get_logger(),
-                    "[agent_%d] MAX_STEPS reached at step %d, final_state=%.6f var=%.2e",
+                    "[agent_%d] MAX_STEPS reached at step %d, "
+                    "final_state=%.6f var=%.2e",
                     agent_id_, step_, state_, compute_local_variance());
                 step_timer_->cancel();
                 if (csv_file_.is_open()) csv_file_.close();
+                if (latency_file_.is_open()) latency_file_.close();
             }
             return;
         }
 
-        // Publish current state
         std_msgs::msg::ByteMultiArray msg;
-        msg.data.resize(12, 0);
-        std::memcpy(msg.data.data(), &state_, sizeof(state_));
+        msg.data.resize(PAYLOAD_BYTES, 0);
+
+        std::memcpy(msg.data.data() + OFF_STATE,  &state_,  sizeof(state_));
         int32_t id = agent_id_;
-        std::memcpy(msg.data.data() + 8, &id, sizeof(id));
+        std::memcpy(msg.data.data() + OFF_SENDER, &id,      sizeof(id));
+        int64_t pub_ns = steady_ns_now();
+        std::memcpy(msg.data.data() + OFF_PUBTIME, &pub_ns, sizeof(pub_ns));
+
         publisher_->publish(msg);
 
         double var = compute_local_variance();
 
-        // Log to CSV
         if (csv_file_.is_open()) {
             csv_file_ << step_ << "," << state_ << ","
-                      << var << ","
-                      << recv_count_ << "\n";
-            csv_file_.flush();  // flush so data is safe even on Ctrl+C
+                      << var << "," << recv_count_ << "\n";
+            csv_file_.flush();
         }
 
-        // Convergence check: variance below threshold for N consecutive steps.
-        // Only count after all agents are known (avoid early-startup false positives).
         int known = 0;
         for (bool b : has_state_) if (b) known++;
         if (known == num_agents_ && var < convergence_threshold_) {
@@ -157,10 +182,12 @@ private:
             if (convergence_count_ >= convergence_stable_steps_) {
                 finished_ = true;
                 RCLCPP_INFO(get_logger(),
-                    "[agent_%d] CONVERGED at step %d, final_state=%.6f var=%.2e (threshold=%.1e)",
+                    "[agent_%d] CONVERGED at step %d, "
+                    "final_state=%.6f var=%.2e (threshold=%.1e)",
                     agent_id_, step_, state_, var, convergence_threshold_);
                 step_timer_->cancel();
                 if (csv_file_.is_open()) csv_file_.close();
+                if (latency_file_.is_open()) latency_file_.close();
                 return;
             }
         } else {
@@ -171,30 +198,44 @@ private:
     }
 
     void on_message(const std_msgs::msg::ByteMultiArray::ConstSharedPtr msg) {
-        if (msg->data.size() < 12) return;
+        if (msg->data.size() < PAYLOAD_BYTES) return;
+
+        int64_t recv_ns = steady_ns_now();
 
         double remote_state = 0.0;
         int32_t sender_id = 0;
-        std::memcpy(&remote_state, msg->data.data(), sizeof(remote_state));
-        std::memcpy(&sender_id, msg->data.data() + 8, sizeof(sender_id));
+        int64_t pub_ns = 0;
+        std::memcpy(&remote_state, msg->data.data() + OFF_STATE,
+                    sizeof(remote_state));
+        std::memcpy(&sender_id, msg->data.data() + OFF_SENDER,
+                    sizeof(sender_id));
+        std::memcpy(&pub_ns, msg->data.data() + OFF_PUBTIME,
+                    sizeof(pub_ns));
 
-        // Skip own messages
         if (sender_id == agent_id_) return;
         if (sender_id < 0 || sender_id >= num_agents_) return;
 
-        // Consensus update: state = state + alpha * (remote - state) / num_neighbors
-        // Per-message version (each incoming message contributes its share):
-        state_ = state_ + alpha_ * (remote_state - state_) / (num_agents_ - 1);
+        int64_t latency_ns = recv_ns - pub_ns;
 
-        // Track for variance
+        if (latency_file_.is_open()) {
+            double latency_us = static_cast<double>(latency_ns) / 1000.0;
+            latency_file_
+                << recv_ns << ","
+                << sender_id << ","
+                << latency_us << ","
+                << step_ << "\n";
+        }
+
+        state_ = state_ + alpha_ * (remote_state - state_) /
+                 (num_agents_ - 1);
+
         last_state_[sender_id] = remote_state;
         has_state_[sender_id] = true;
-        last_state_[agent_id_] = state_;  // own state always current
+        last_state_[agent_id_] = state_;
 
         recv_count_++;
     }
 
-    /// Compute variance over known states (own + received).
     double compute_local_variance() const {
         double sum = 0.0;
         int count = 0;
@@ -222,8 +263,11 @@ private:
         int known = 0;
         for (bool b : has_state_) if (b) known++;
         RCLCPP_INFO(get_logger(),
-            "[agent_%d] step=%d state=%.4f local_var=%.4e known=%d recv=%lu",
+            "[agent_%d] step=%d state=%.4f local_var=%.4e "
+            "known=%d recv=%lu",
             agent_id_, step_, state_, var, known, recv_count_);
+
+        if (latency_file_.is_open()) latency_file_.flush();
     }
 
     int agent_id_ = 0;
@@ -242,10 +286,13 @@ private:
     uint64_t recv_count_ = 0;
 
     std::string output_csv_;
+    std::string latency_csv_;
     std::ofstream csv_file_;
+    std::ofstream latency_file_;
 
     rclcpp::Publisher<std_msgs::msg::ByteMultiArray>::SharedPtr publisher_;
-    rclcpp::Subscription<std_msgs::msg::ByteMultiArray>::SharedPtr subscription_;
+    rclcpp::Subscription<std_msgs::msg::ByteMultiArray>::SharedPtr
+        subscription_;
     rclcpp::TimerBase::SharedPtr step_timer_;
     rclcpp::TimerBase::SharedPtr stats_timer_;
 };
