@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 540" font-family="-apple-system, sans-serif">
+  <!-- background -->
+  <rect width="900" height="540" fill="#fafafa"/>
+
+  <!-- title -->
+  <text x="450" y="30" font-size="18" font-weight="bold" text-anchor="middle" fill="#222">
+    Temporis Per-Agent Shaper with QoS Auto-Adoption
+  </text>
+  <text x="450" y="52" font-size="11" text-anchor="middle" fill="#666">
+    N client queues share one router latency model; QoS adopted from publishers via DDS discovery
+  </text>
+
+  <!-- AGENTS column (left) -->
+  <text x="100" y="90" font-size="13" font-weight="bold" fill="#2E86AB">Agents</text>
+
+  <!-- agent boxes -->
+  <g>
+    <rect x="40" y="105" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="100" y="127" font-size="12" text-anchor="middle" fill="#222">/robot_0</text>
+
+    <rect x="40" y="148" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="100" y="170" font-size="12" text-anchor="middle" fill="#222">/robot_1</text>
+
+    <rect x="40" y="191" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="100" y="213" font-size="12" text-anchor="middle" fill="#222">/robot_2</text>
+
+    <text x="100" y="252" font-size="14" text-anchor="middle" fill="#888">. . .</text>
+
+    <rect x="40" y="270" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="100" y="292" font-size="12" text-anchor="middle" fill="#222">/robot_N-1</text>
+  </g>
+
+  <!-- arrows agents → shaper -->
+  <g stroke="#888" stroke-width="1.2" fill="none">
+    <path d="M 165 122 L 280 122" marker-end="url(#arr)"/>
+    <path d="M 165 165 L 280 165" marker-end="url(#arr)"/>
+    <path d="M 165 208 L 280 208" marker-end="url(#arr)"/>
+    <path d="M 165 287 L 280 287" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- input topic label -->
+  <text x="220" y="100" font-size="10" text-anchor="middle" fill="#666" font-style="italic">
+    /temporis/raw/states
+  </text>
+
+  <!-- SHAPER (middle, big box) -->
+  <g>
+    <rect x="285" y="80" width="330" height="320" rx="10" fill="#fff8e7" stroke="#d4a017" stroke-width="2"/>
+    <text x="450" y="105" font-size="14" font-weight="bold" text-anchor="middle" fill="#222">
+      temporis_per_agent_shaper
+    </text>
+
+    <!-- QoS auto-adopt block -->
+    <rect x="300" y="120" width="300" height="50" rx="4" fill="#fff" stroke="#bbb"/>
+    <text x="450" y="138" font-size="11" font-weight="bold" text-anchor="middle" fill="#333">
+      QoS auto-adoption (Step 8 v3)
+    </text>
+    <text x="450" y="156" font-size="10" text-anchor="middle" fill="#666">
+      Reads publisher QoS via DDS discovery → matches it
+    </text>
+
+    <!-- N per-agent queues -->
+    <text x="450" y="190" font-size="11" font-weight="bold" text-anchor="middle" fill="#333">
+      N independent client queues
+    </text>
+
+    <g>
+      <!-- queue boxes -->
+      <rect x="310" y="200" width="60" height="22" fill="#fff" stroke="#888" stroke-width="1"/>
+      <text x="340" y="216" font-size="10" text-anchor="middle" fill="#222">Q_0</text>
+
+      <rect x="376" y="200" width="60" height="22" fill="#fff" stroke="#888" stroke-width="1"/>
+      <text x="406" y="216" font-size="10" text-anchor="middle" fill="#222">Q_1</text>
+
+      <rect x="442" y="200" width="60" height="22" fill="#fff" stroke="#888" stroke-width="1"/>
+      <text x="472" y="216" font-size="10" text-anchor="middle" fill="#222">Q_2</text>
+
+      <text x="525" y="216" font-size="11" fill="#888">...</text>
+
+      <rect x="540" y="200" width="60" height="22" fill="#fff" stroke="#888" stroke-width="1"/>
+      <text x="570" y="216" font-size="10" text-anchor="middle" fill="#222">Q_N-1</text>
+    </g>
+
+    <!-- arrow down to router -->
+    <path d="M 450 230 L 450 250" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- shared router box -->
+    <rect x="310" y="255" width="280" height="80" rx="4" fill="#f0e5d0" stroke="#d4a017" stroke-width="1.5"/>
+    <text x="450" y="275" font-size="11" font-weight="bold" text-anchor="middle" fill="#333">
+      Shared router latency model
+    </text>
+    <text x="450" y="293" font-size="10" text-anchor="middle" fill="#444" font-family="monospace">
+      router_base_cost = 108µs
+    </text>
+    <text x="450" y="308" font-size="10" text-anchor="middle" fill="#444" font-family="monospace">
+      router_per_sub_cost × N_subs = 2.7µs × N
+    </text>
+    <text x="450" y="323" font-size="10" text-anchor="middle" fill="#444" font-family="monospace">
+      + propagation_router_subscriber
+    </text>
+
+    <!-- drain timer note -->
+    <text x="450" y="358" font-size="10" text-anchor="middle" fill="#666" font-style="italic">
+      Drain timer @ 2 kHz publishes from each Q_i to /fleet/states
+    </text>
+    <text x="450" y="375" font-size="10" text-anchor="middle" fill="#666" font-style="italic">
+      after Temporis-computed delay expires
+    </text>
+  </g>
+
+  <!-- arrow shaper → output -->
+  <g stroke="#888" stroke-width="1.2" fill="none">
+    <path d="M 620 122 L 735 122" marker-end="url(#arr)"/>
+    <path d="M 620 165 L 735 165" marker-end="url(#arr)"/>
+    <path d="M 620 208 L 735 208" marker-end="url(#arr)"/>
+    <path d="M 620 287 L 735 287" marker-end="url(#arr)"/>
+  </g>
+
+  <text x="678" y="100" font-size="10" text-anchor="middle" fill="#666" font-style="italic">
+    /fleet/states
+  </text>
+
+  <!-- SUBSCRIBER agents (right) -->
+  <text x="797" y="90" font-size="13" font-weight="bold" fill="#2E86AB">Same agents</text>
+  <text x="797" y="103" font-size="10" fill="#888">(as subscribers)</text>
+
+  <g>
+    <rect x="735" y="105" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="795" y="127" font-size="12" text-anchor="middle" fill="#222">/robot_0</text>
+
+    <rect x="735" y="148" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="795" y="170" font-size="12" text-anchor="middle" fill="#222">/robot_1</text>
+
+    <rect x="735" y="191" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="795" y="213" font-size="12" text-anchor="middle" fill="#222">/robot_2</text>
+
+    <text x="795" y="252" font-size="14" text-anchor="middle" fill="#888">. . .</text>
+
+    <rect x="735" y="270" width="120" height="34" rx="4" fill="#fff" stroke="#2E86AB" stroke-width="1.5"/>
+    <text x="795" y="292" font-size="12" text-anchor="middle" fill="#222">/robot_N-1</text>
+  </g>
+
+  <!-- Bottom: caption -->
+  <g>
+    <rect x="40" y="430" width="820" height="85" rx="6" fill="#fff" stroke="#ddd"/>
+    <text x="60" y="455" font-size="12" font-weight="bold" fill="#333">
+      Key properties:
+    </text>
+    <text x="60" y="475" font-size="11" fill="#444">
+      • <tspan font-weight="bold">QoS-transparent</tspan>: shaper detects agent QoS (reliable/best_effort) via discovery and matches it — no manual config
+    </text>
+    <text x="60" y="492" font-size="11" fill="#444">
+      • <tspan font-weight="bold">Per-agent isolation</tspan>: each agent's outbound traffic lives in its own queue (no cross-agent backlog)
+    </text>
+    <text x="60" y="509" font-size="11" fill="#444">
+      • <tspan font-weight="bold">Shared router model</tspan>: matches Zenoh client-router architecture used during calibration (108µs/2.7µs)
+    </text>
+  </g>
+
+  <!-- arrow marker -->
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#888"/>
+    </marker>
+  </defs>
+</svg>
